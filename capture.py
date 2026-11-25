@@ -1529,14 +1529,23 @@ def render_help_layer(W, H, st, drawer):
 
 
 def draw_help(img, st, drawer, cache):
-    """画像を暗くしてヘルプを重ねる（文字の画像は内容が変わったときだけ作り直す）"""
+    """画像を暗くしてヘルプを重ねる
+
+    文字の画像は内容（または表示する大きさ）が変わったときだけ作り直す。
+    ウィンドウのリサイズ中は前の画像を引き伸ばして使うので、ドラッグしても重くならない。
+    """
     H, W = img.shape[:2]
-    key = (W, H, st.proc, st.blur_proc, st.gaussian_scale, st.median_scale,
+    size = (W, H)
+    key = (st.proc, st.blur_proc, st.gaussian_scale, st.median_scale,
            st.bilateral_scale, st.profile_face, bool(st.pose and st.pose.smoothing), st.show_hist,
            st.hough_sigma, st.hog_view, len(st.tried) if st.tried is not None else -1, sum(a for a, _ in st.progress.values()))
-    if cache.get("key") != key:
-        cache["key"] = key
-        cache["layer"] = render_help_layer(W, H, st, drawer)
+    stable = cache.get("prev_size") == size        # 大きさが変わっていない＝リサイズが止まった
+    if cache.get("key") != key or (stable and cache.get("size") != size):
+        cache.update(key=key, layer=render_help_layer(W, H, st, drawer), size=size, shown=size)
+    elif cache.get("shown") != size:               # 作り直すのは重いので、まずは引き伸ばして見せる
+        cache.update(layer=cv2.resize(cache["layer"], size, interpolation=cv2.INTER_LINEAR),
+                     shown=size)
+    cache["prev_size"] = size
     dark = cv2.convertScaleAbs(img, alpha=HELP_DIM)
     return cv2.max(dark, cache["layer"])
 
@@ -1624,6 +1633,85 @@ def open_source(arg):
     return cv2.VideoCapture(arg), True
 
 
+# ----------------------------------------------------------------------
+# ウィンドウ（サイズを変えられるようにする）
+# ----------------------------------------------------------------------
+MIN_WINDOW_W, MIN_WINDOW_H = 160, 100      # これより小さい大きさは「リサイズ中」とみなす
+INITIAL_FIT = 0.9                          # 最初のウィンドウは画面（タスクバーを除く）のこの割合まで
+
+
+def screen_area():
+    """タスクバーを除いた画面の大きさ (幅, 高さ)。分からなければ None
+
+    Windows 以外では調べない（ウィンドウは入力画像の大きさで開く）。
+    """
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+
+        class RECT(ctypes.Structure):
+            _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
+                        ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+
+        rect = RECT()
+        if not ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(rect), 0):
+            return None                       # SPI_GETWORKAREA
+        return rect.right - rect.left, rect.bottom - rect.top
+    except Exception:
+        return None
+
+
+def create_window(width, height):
+    """サイズを変えられるウィンドウを作る
+
+    最初は入力画像と同じ大きさ。画面より大きくなる場合は画面に収まる大きさにする。
+    """
+    w, h = width, height
+    area = screen_area()
+    if area is not None:
+        scale = min(area[0] * INITIAL_FIT / w, area[1] * INITIAL_FIT / h, 1.0)
+        w, h = max(int(w * scale), 1), max(int(h * scale), 1)
+    try:
+        cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
+        cv2.resizeWindow(WINDOW_NAME, w, h)
+    except cv2.error as e:
+        print("ウィンドウを作成できませんでした: %s" % e)
+
+
+def window_size():
+    """いまのウィンドウの画像の表示領域 (幅, 高さ)
+
+    最小化中やリサイズの途中など、確かな値が取れないときは None を返す。
+    """
+    try:
+        _, _, w, h = cv2.getWindowImageRect(WINDOW_NAME)
+    except cv2.error:
+        return None
+    if w < MIN_WINDOW_W or h < MIN_WINDOW_H:
+        return None
+    return w, h
+
+
+def fit_to_window(img, size, interp):
+    """img を size に収まる大きさへ拡大／縮小し、余ったところを黒で埋めた画像を返す
+
+    文字はこの大きさに対して描くので、ウィンドウを拡大しても文字がぼやけない。
+    """
+    ww, wh = size
+    h, w = img.shape[:2]
+    scale = min(ww / w, wh / h)
+    nw, nh = max(int(round(w * scale)), 1), max(int(round(h * scale)), 1)
+    if (nw, nh) != (w, h):
+        img = cv2.resize(img, (nw, nh), interpolation=interp)
+    if (nw, nh) == (ww, wh):        # ぴったり収まった（余白なし）
+        return img
+    canvas = np.zeros((wh, ww, 3), np.uint8)
+    x, y = (ww - nw) // 2, (wh - nh) // 2
+    canvas[y:y + nh, x:x + nw] = img
+    return canvas
+
+
 def draw_recording_status(img, recorder, drawer, cov):
     """演習記録をとっていることと、網羅の状況（これまでの実行も含む）を FPS の表示の下に出す"""
     H, W = img.shape[:2]
@@ -1697,6 +1785,9 @@ def main():
     height, width = img.shape[:2]
     proc_size = (int(width * PROC_SCALE), int(height * PROC_SCALE))
     st = State((proc_size[1], proc_size[0]))
+
+    create_window(width, height)      # サイズを変えられるウィンドウを用意する
+    win_size = (width, height)        # 画像を表示する大きさ（リサイズに合わせて更新する）
 
     ndi_send, ndi_frame = None, None
     print_help()
@@ -1810,28 +1901,37 @@ def main():
                 st.tried, st.progress = recorder.tried(), recorder.progress()
                 coverage = recorder.coverage()
 
-        # 表示
+        # 表示（ウィンドウの大きさに合わせて描き直す）
         if result.ndim == 2:
             result = cv2.cvtColor(result, cv2.COLOR_GRAY2BGR)
         interp = cv2.INTER_NEAREST if st.proc in NEAREST_PROCS else cv2.INTER_LINEAR
-        result = cv2.resize(result, (width, height), interpolation=interp)
+        win = window_size()
+        if win is not None:            # 取れないときは直前の大きさのまま
+            win_size = win
+        view = fit_to_window(result, win_size, interp)
         if show_help:
-            result = draw_help(result, st, drawer, help_cache)
-        px = status_px(height)
+            view = draw_help(view, st, drawer, help_cache)
+        px = status_px(view.shape[0])
         status = "FPS:%.1f  proc:%s  blur:%s" % (1.0 / duration, st.proc, st.blur_proc)
         if st.proc in PARAMS:
             status += "  %s:%s" % (PARAMS[st.proc][0], param(st, st.proc))
-        drawer.put(result, status, (px * 0.5, px * 1.3), (0, 255, 0), px, bold=True)
+        drawer.put(view, status, (px * 0.5, px * 1.3), (0, 255, 0), px, bold=True)
         if not show_help:
-            drawer.put(result, "?: ヘルプ" if drawer.japanese else "?: help",
-                       (px * 0.5, height - px * 0.6), (0, 255, 0), px * 0.8)
+            drawer.put(view, "?: ヘルプ" if drawer.japanese else "?: help",
+                       (px * 0.5, view.shape[0] - px * 0.6), (0, 255, 0), px * 0.8)
             if recorder is not None:
-                draw_recording_status(result, recorder, drawer, coverage)
-        cv2.imshow(WINDOW_NAME, result)
+                draw_recording_status(view, recorder, drawer, coverage)
+        cv2.imshow(WINDOW_NAME, view)
 
-        # NDI へ送信
+        # NDI へ送信（送る側の解像度が変わらないよう、入力画像の大きさに戻してから送る）
         if ndi_send is not None:
-            ndi_frame.data = cv2.cvtColor(result, cv2.COLOR_BGR2BGRA)
+            view_size = (view.shape[1], view.shape[0])
+            if view_size != (width, height):
+                ndi_frame.data = cv2.cvtColor(cv2.resize(view, (width, height),
+                                                          interpolation=cv2.INTER_AREA),
+                                              cv2.COLOR_BGR2BGRA)
+            else:
+                ndi_frame.data = cv2.cvtColor(view, cv2.COLOR_BGR2BGRA)
             ndi_frame.FourCC = ndi.FOURCC_VIDEO_TYPE_BGRX
             ndi.send_send_video_v2(ndi_send, ndi_frame)
 
