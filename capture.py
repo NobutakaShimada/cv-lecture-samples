@@ -1346,14 +1346,37 @@ COLOR_UNTRIED = (0, 150, 255)   # まだ試していない機能（橙。演習�
 class TextDrawer:
     """OpenCV 4 / 5 の違いを吸収して文字を描くクラス（px は文字の大きさ[画素]）"""
 
+    # 日本語を描くためのフォント候補（先に見つかったものを使う）
+    # OpenCV 5 の FontFace はフォント名（"sans" など）を解決せず、英字だけの内蔵フォントに
+    # なってしまう（日本語は 1 文字 1 個の "?" になる）。ファイルのパスを渡したときだけ
+    # 実際のフォントが使われるので、ここではパスを直接指定する。
+    JP_FONT_PATHS = (
+        r"C:\Windows\Fonts\YuGothM.ttc",       # Windows: Yu Gothic
+        r"C:\Windows\Fonts\meiryo.ttc",        # Windows: メイリオ
+        r"C:\Windows\Fonts\msgothic.ttc",      # Windows: MS ゴシック
+        "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc",   # macOS
+        "/System/Library/Fonts/Hiragino Sans GB.ttc",        # macOS
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",  # Linux
+    )
+
     def __init__(self):
         self.face = None
+        self.japanese = False
         if hasattr(cv2, "FontFace"):        # OpenCV 5 以降
-            try:
-                self.face = cv2.FontFace("sans")
-            except cv2.error:
-                self.face = None
-        self.japanese = self.face is not None
+            for path in self.JP_FONT_PATHS:     # 日本語が描けるフォントを探す
+                if not os.path.exists(path):
+                    continue
+                try:
+                    self.face = cv2.FontFace(path)
+                    self.japanese = True
+                    break
+                except cv2.error:
+                    continue
+            if self.face is None:               # 無ければ英字だけの内蔵フォント
+                try:
+                    self.face = cv2.FontFace("sans")
+                except cv2.error:
+                    self.face = None
 
     def _hershey_scale(self, px):
         return cv2.getFontScaleFromHeight(cv2.FONT_HERSHEY_SIMPLEX, max(int(px * 0.7), 1), 1)
