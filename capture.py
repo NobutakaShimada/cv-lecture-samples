@@ -1906,7 +1906,7 @@ def main():
         result = PROC_FUNCS[st.proc](img, st)
         if recorder is not None:
             recorder.record(st.proc, raw, st, param(st, st.proc) if st.proc in PARAMS else None,
-                            items=record_items(st))
+                            items=record_items(st), paused=show_help)   # ヘルプ中は数えない
             if t_now - t_tried >= 1.0:          # 網羅の状況は 1 秒ごとに計算し直す
                 t_tried = t_now
                 st.tried, st.progress = recorder.tried(), recorder.progress()

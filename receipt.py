@@ -340,6 +340,7 @@ class Recorder:
         self.last_save = time.time()
         self.frames = 0
         self.seconds = 0.0
+        self.help_seconds = 0.0                 # ヘルプを表示していた時間（機能を試した時間には数えない）
         self.switches = 0                       # 処理を切り替えた回数（合計）
         self.modes = {}                         # 処理名 → 利用状況
         self.items = {}                         # 項目名 → [フレーム数, 秒数]
@@ -362,14 +363,20 @@ class Recorder:
         k = "%s@%s" % (name, proc)
         self.keys[k] = self.keys.get(k, 0) + 1
 
-    def record(self, proc, img, st=None, param_value=None, values=None, items=()):
+    def record(self, proc, img, st=None, param_value=None, values=None, items=(), paused=False):
         """1 フレームごとに呼ぶ。
         proc: 処理名、img: 処理前の入力画像、st: 状態（st.found = 検出系の処理で見つけた数）、
         param_value: ←/→ で変えるパラメータの値、values: {名前: 数値}（平均・ばらつき・最小・最大を記録）、
-        items: このフレームで使っている項目の名前（カタログの名前）"""
+        items: このフレームで使っている項目の名前（カタログの名前）、
+        paused: True ならヘルプの表示中などで、機能を試した時間には数えない（help_seconds にだけ足す）"""
         t = time.time()
         dt = 0.0 if self.prev_t is None else min(t - self.prev_t, MAX_GAP)
         self.prev_t = t
+        if paused:
+            self.help_seconds += dt
+            if t - self.last_save >= AUTOSAVE_SECONDS:
+                self.save()
+            return
         self.frames += 1
         self.seconds += dt
         for item in items:
@@ -481,6 +488,7 @@ class Recorder:
                     "opencv": cv2.__version__, "numpy": np.__version__},
             "source": self.source, "frame_size": self.frame_size,
             "frames": self.frames, "seconds": round(self.seconds, 2), "elapsed": round(elapsed, 2),
+            "help_seconds": round(self.help_seconds, 2),
             "fps": round(self.frames / max(elapsed, 1e-6), 2), "switches": self.switches,
             "saves": self.saves + 1,
             "modes": modes,
