@@ -237,7 +237,7 @@ python capture.py movie.mp4   # カメラの代わりに動画ファイルを使
 | | `O` | Hough 変換: 円 **←→**（円の中心とみなす票数） |
 | 検出 | `F` | 顔検出（Haar-like 特徴・Viola-Jones 法） |
 | | `Y` | 顔検出（YuNet・CNN） |
-| | `U` | 上半身検出（Haar-like 特徴） |
+| | `U` | 上半身検出（Haar-like 特徴・遠くの人向け。カメラの前に座った人はほとんど検出できません） |
 | | `P` | 人物検出（HOG 特徴 + SVM） **←→**（SVM の判定のしきい値） |
 | | `K` | 人体の骨格推定（MediaPipe Pose） |
 | 動き | `f` | 密なオプティカルフロー（Farneback） |

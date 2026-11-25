@@ -471,15 +471,26 @@ def proc_facedetect(img, st):
     return result
 
 
+# U の画面に常に出す但し書き（このカスケードの得意・不得意）
+BODY_NOTE = [("note", "trained on small, distant people (head + shoulders)"),
+             ("", "a person sitting close to the camera is rarely detected"),
+             ("", "try a video of people walking far away")]
+
+
 def proc_bodydetect(img, st):
+    # 上半身（頭と肩）の Haar-like 特徴カスケード（Kruppa & Schiele, 2004）。
+    # 監視カメラで遠くから写した人を 22x18 画素の窓で学習したもので、
+    # カメラの前に座った人のように顔が大きく写り肩が切れる構図はほとんど検出できない。
     if not load_haar(st):
         return show_unavailable(img, "Haar cascade not available")
     result = img.copy()
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    bodies = st.haar["body"].detectMultiScale(gray, 1.3, 5)
+    # 引数: 拡大率（窓を 1.1 倍ずつ大きくして探す）, 必要な重なり数（3 個以上の候補が重なれば採用）
+    bodies = st.haar["body"].detectMultiScale(gray, 1.1, 3)
     for (x, y, w, h) in bodies:
         cv2.rectangle(result, (x, y), (x + w, y + h), (255, 0, 0), 2)
     st.found = len(bodies)
+    draw_key_guide(result, BODY_NOTE, int(result.shape[1] * 0.9))
     return result
 
 
@@ -1206,7 +1217,7 @@ PROCS = {
     'F': ("facedetect",    proc_facedetect,    "顔検出（Haar-like 特徴）"),
     'Y': ("yunet",         proc_yunet,         "顔検出（YuNet・CNN）"),
     'K': ("pose",          proc_pose,          "人体の骨格推定（MediaPipe Pose）"),
-    'U': ("bodydetect",    proc_bodydetect,    "上半身検出（Haar-like）"),
+    'U': ("bodydetect",    proc_bodydetect,    "上半身検出（Haar-like・遠くの人向け）"),
     'd': ("dog",           proc_dog,           "DoG フィルタ"),
     'e': ("hist_eq",       proc_hist_eq,       "ヒストグラム平坦化"),
     'E': ("hist_eq_CLAHE", proc_hist_eq_clahe, "適応的ヒストグラム平坦化（CLAHE）"),
@@ -1329,7 +1340,7 @@ HELP_EN = {   # OpenCV 4 用の英語の説明（ない処理は処理名をそ�
     "labeling2": "Labeling + area, centroid, principal axis",
     "lktracking": "Feature tracking (Lucas-Kanade)",
     "facedetect": "Face detection (Haar-like)",
-    "yunet": "Face detection (YuNet, CNN)", "bodydetect": "Upper body detection (Haar-like)",
+    "yunet": "Face detection (YuNet, CNN)", "bodydetect": "Upper body detection (Haar-like, distant people)",
     "pose": "Human pose estimation (MediaPipe Pose)",
     "dog": "DoG filter", "hist_eq": "Histogram equalization",
     "hist_eq_CLAHE": "Adaptive histogram equalization (CLAHE)",
